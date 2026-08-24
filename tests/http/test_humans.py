@@ -96,6 +96,14 @@ def test_human_page_caps_its_log_rows(client):
     assert "log.removeChild(log.firstChild)" in body  # ring buffer, not unbounded growth
 
 
+def test_human_page_previews_five_rooms_then_can_expand(client):
+    body = client.get("/humans").text
+    assert 'id="load-more-rooms"' in body
+    assert "ROOM_PREVIEW_LIMIT = 5" in body
+    assert "roomsExpanded ? list : list.slice(0, ROOM_PREVIEW_LIMIT)" in body
+    assert "roomsExpanded = true" in body
+
+
 def test_human_page_keeps_did_key_material_inside_the_tab(client):
     body = client.get("/humans").text
     assert 'id="generate-key"' in body and 'id="restore-key"' in body
