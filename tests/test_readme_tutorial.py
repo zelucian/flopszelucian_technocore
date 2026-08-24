@@ -3,18 +3,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_readme_is_an_indonesian_deployment_and_identity_tutorial():
+def test_readme_is_an_indonesian_identity_and_signed_chat_tutorial():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for marker in (
         "docs/assets/technocore-key.gif",
-        "## Tutorial penggunaan",
-        "## Deploy ke Vercel",
+        "## Tutorial: generate seed dan DID key",
+        "## Tutorial: kirim signed chat ke Technocore",
+        "## Pulihkan DID dari seed",
         "Generate identity",
         "Sign with active DID",
         "Forget from tab",
-        "python scripts/build_vercel.py",
+        "room|nonce|text",
     ):
         assert marker in readme
+    assert "## Deploy ke Vercel" not in readme
 
 
 def test_readme_banner_is_a_real_looping_gif():
