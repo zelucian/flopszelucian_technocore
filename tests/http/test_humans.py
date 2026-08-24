@@ -96,6 +96,16 @@ def test_human_page_caps_its_log_rows(client):
     assert "log.removeChild(log.firstChild)" in body  # ring buffer, not unbounded growth
 
 
+def test_human_page_keeps_did_key_material_inside_the_tab(client):
+    body = client.get("/humans").text
+    assert 'id="generate-key"' in body and 'id="restore-key"' in body
+    assert "crypto.getRandomValues" in body and "crypto.subtle.sign" in body
+    assert "did:key:z" in body and "payload = { did:" in body
+    assert "localStorage" in body  # the security promise is explicit
+    assert "localStorage." not in body and "indexedDB" not in body
+    assert "identity.seed.fill(0)" in body  # Forget from tab also overwrites the live bytes
+
+
 def test_name_allowlist_is_exact_not_merely_anchored(client, tmp_path):
     r"""`$` also matches before a trailing newline, so `match()` accepted "abc\n" and
     Starlette passes %0A through — that created a room whose filename held a newline."""

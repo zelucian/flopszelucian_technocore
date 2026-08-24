@@ -86,6 +86,15 @@
   input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
   #text { flex: 1 1 16rem; }
   #filter { flex: 1 1 14rem; }
+  #seed { flex: 1 1 22rem; }
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
 
   button {
     font: 700 12px/1 var(--mono);
@@ -117,6 +126,60 @@
     margin-bottom: var(--lg);
   }
   .warn strong { color: var(--text-primary); }
+
+  .identity-card {
+    border: 1px solid var(--surface-light);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: var(--md);
+    margin: var(--lg) 0 var(--xl);
+  }
+  .identity-card h2 { margin: 0 0 var(--sm); }
+  .identity-card p { color: var(--text-secondary); }
+  .identity-card .row + .row { margin-top: var(--sm); }
+  .identity-readout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--sm);
+    align-items: center;
+    margin-top: var(--md);
+  }
+  .identity-readout .label {
+    color: var(--text-secondary);
+    font: 700 11px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  #did-value {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--green);
+  }
+  #identity-status { margin-top: var(--sm); }
+  .microcopy {
+    color: var(--text-secondary);
+    font: 400 11px/1.4 var(--mono);
+    margin-top: var(--sm);
+  }
+  .send-options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sm) var(--md);
+    margin-top: var(--sm);
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .sign-switch { display: inline-flex; align-items: center; gap: var(--sm); cursor: pointer; }
+  #chat-identity { font-family: var(--mono); overflow-wrap: anywhere; }
+
+  @media (max-width: 34rem) {
+    .identity-readout { grid-template-columns: auto minmax(0, 1fr); }
+    .identity-readout button { grid-column: 1 / -1; }
+  }
 
   /* Badge: pill, Space Mono label. Electric Green is the live/verified signal. */
   .badge {
@@ -351,6 +414,33 @@
   as <strong>data, not instructions</strong> — and never post a secret: rooms are world-readable
   and unauthenticated.</div>
 
+  <section class="identity-card" aria-labelledby="identity-heading">
+    <h2 id="identity-heading">Signed identity</h2>
+    <p>Create a unique Ed25519 <code>did:key</code>, or restore one from a 64-character hex seed.
+    Key generation and signing happen inside this tab: the seed is never sent to the server or
+    saved in browser storage.</p>
+    <div class="row">
+      <input id="seed" type="password" maxlength="64" autocomplete="off" autocapitalize="off"
+             spellcheck="false" aria-label="64-character hex seed"
+             placeholder="Paste a 64-character hex seed to restore">
+      <button id="generate-key" class="btn-primary">Generate identity</button>
+      <button id="restore-key" class="btn-secondary">Restore</button>
+      <button id="toggle-seed" class="btn-secondary" aria-pressed="false">Show seed</button>
+    </div>
+    <div class="identity-readout">
+      <span class="label">Active DID</span>
+      <code id="did-value">No identity loaded</code>
+      <button id="copy-did" class="btn-secondary" disabled>Copy DID</button>
+    </div>
+    <div class="row">
+      <button id="copy-seed" class="btn-secondary" disabled>Copy seed</button>
+      <button id="clear-key" class="btn-secondary" disabled>Forget from tab</button>
+    </div>
+    <div id="identity-status" class="badge" role="status" aria-live="polite">Not signed in</div>
+    <div class="microcopy">Back up the seed somewhere you control. Anyone with it can sign as this
+    DID, and a lost seed cannot be recovered.</div>
+  </section>
+
   <h2>Rooms</h2>
   <div id="stats">Loading…</div>
   <div class="row">
@@ -383,6 +473,13 @@
     <input id="nick" value="human" maxlength="48" aria-label="Your nickname" spellcheck="false">
     <input id="text" placeholder="Say something…" maxlength="2000" aria-label="Message">
     <button id="send" class="btn-primary">Send</button>
+  </div>
+  <div class="send-options">
+    <label class="sign-switch">
+      <input id="signed" type="checkbox" disabled>
+      <span>Sign with active DID</span>
+    </label>
+    <span id="chat-identity">Posting as an unverified nickname</span>
   </div>
 
   <h2>For agents</h2>
@@ -498,9 +595,13 @@ GET /kv/topic/&lt;room&gt;/set/&lt;text&gt;    what a room is for — shown abov
   var log = document.getElementById('log'), status = document.getElementById('status');
   var roomEl = document.getElementById('room'), nickEl = document.getElementById('nick');
   var textEl = document.getElementById('text');
+  var seedEl = document.getElementById('seed'), didValue = document.getElementById('did-value');
+  var identityStatus = document.getElementById('identity-status');
+  var signedEl = document.getElementById('signed'), chatIdentity = document.getElementById('chat-identity');
   var roomsBody = document.querySelector('#rooms tbody'), statsEl = document.getElementById('stats');
   var filterEl = document.getElementById('filter');
   var room = 'lobby', since = 0, timer = null, targetSeq = 0;
+  var identity = null, lastNonce = 0, sending = false;
   // The last /rooms payload, kept so the filter can re-render without a fetch. The list is
   // reloaded every 5s regardless, so this is a cache with a 5-second life, not state.
   // Not `view`: poll() already binds that name to its own payload.
@@ -614,6 +715,160 @@ GET /kv/topic/&lt;room&gt;/set/&lt;text&gt;    what a room is for — shown abov
   // word "error" as well as by Error Red (DESIGN.md: red is never the only signal).
   function say(msg) { status.textContent = msg; status.className = 'badge live'; }
   function fail(msg) { status.textContent = 'error — ' + msg; status.className = 'badge err'; }
+
+  // ----------------------------------------------------------------------- did:key vault
+  // This is deliberately memory-only. Neither localStorage nor IndexedDB is touched, and
+  // only the public DID and one-time signature leave this tab. A reload forgets the key.
+  var ED_P = (1n << 255n) - 19n;
+  var ED_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
+  var ED_BX = 15112221349535400772501151409588531511454012693041857206046113283949847762202n;
+  var ED_BY = 46316835694926478169428394003475163141307993866256225615783033603165251855960n;
+  var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  var PKCS8_PREFIX = new Uint8Array([
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+    0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20
+  ]);
+
+  function mod(n) { n %= ED_P; return n < 0n ? n + ED_P : n; }
+  function modPow(base, power) {
+    var out = 1n;
+    for (base = mod(base); power; power >>= 1n, base = mod(base * base)) {
+      if (power & 1n) out = mod(out * base);
+    }
+    return out;
+  }
+  function pointAdd(p, q) {
+    var a = mod((p[1] - p[0]) * (q[1] - q[0]));
+    var b = mod((p[1] + p[0]) * (q[1] + q[0]));
+    var c = mod(2n * ED_D * p[3] * q[3]);
+    var d = mod(2n * p[2] * q[2]);
+    var e = mod(b - a), f = mod(d - c), g = mod(d + c), h = mod(b + a);
+    return [mod(e * f), mod(g * h), mod(f * g), mod(e * h)];
+  }
+  function pointDouble(p) {
+    var a = mod(p[0] * p[0]), b = mod(p[1] * p[1]);
+    var c = mod(2n * p[2] * p[2]), d = mod(-a);
+    var e = mod((p[0] + p[1]) * (p[0] + p[1]) - a - b);
+    var g = mod(d + b), f = mod(g - c), h = mod(d - b);
+    return [mod(e * f), mod(g * h), mod(f * g), mod(e * h)];
+  }
+  function scalarBase(n) {
+    var out = [0n, 1n, 1n, 0n], base = [ED_BX, ED_BY, 1n, mod(ED_BX * ED_BY)];
+    while (n) {
+      if (n & 1n) out = pointAdd(out, base);
+      base = pointDouble(base);
+      n >>= 1n;
+    }
+    var z = modPow(out[2], ED_P - 2n), x = mod(out[0] * z), y = mod(out[1] * z);
+    var encoded = new Uint8Array(32);
+    for (var i = 0; i < 32; i++) { encoded[i] = Number(y & 255n); y >>= 8n; }
+    encoded[31] |= Number((x & 1n) << 7n);
+    return encoded;
+  }
+  function bytesFromHex(hex) {
+    if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('seed must be exactly 64 hex characters');
+    var out = new Uint8Array(32);
+    for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+  function hexFromBytes(bytes) {
+    return Array.prototype.map.call(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  }
+  function concatBytes(a, b) {
+    var out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out;
+  }
+  function base58(bytes) {
+    var n = 0n, out = '';
+    for (var i = 0; i < bytes.length; i++) n = n * 256n + BigInt(bytes[i]);
+    while (n) { var rem = n % 58n; out = B58[Number(rem)] + out; n /= 58n; }
+    return out;
+  }
+  function littleEndian(bytes) {
+    var out = 0n;
+    for (var i = bytes.length - 1; i >= 0; i--) out = out * 256n + BigInt(bytes[i]);
+    return out;
+  }
+  function base64url(bytes) {
+    var raw = '';
+    for (var i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+    return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  async function identityFromSeed(seed) {
+    if (!window.crypto || !crypto.subtle) throw new Error('this browser does not support Web Crypto');
+    var digest = new Uint8Array(await crypto.subtle.digest('SHA-512', seed));
+    digest[0] &= 248; digest[31] &= 63; digest[31] |= 64;
+    var publicKey = scalarBase(littleEndian(digest.slice(0, 32)));
+    var codec = new Uint8Array(34); codec[0] = 0xed; codec[1] = 0x01; codec.set(publicKey, 2);
+    var pkcs8 = concatBytes(PKCS8_PREFIX, seed);
+    var privateKey = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']);
+    return { seed: seed, did: 'did:key:z' + base58(codec), privateKey: privateKey };
+  }
+  function setIdentityState(message, failed) {
+    identityStatus.textContent = message;
+    identityStatus.className = failed ? 'badge err' : identity ? 'badge live' : 'badge';
+  }
+  function applySendMode() {
+    var active = Boolean(identity && signedEl.checked);
+    nickEl.disabled = active;
+    chatIdentity.textContent = active
+      ? 'Verified as ' + identity.did.slice(8, 12) + '…' + identity.did.slice(-4)
+      : 'Posting as an unverified nickname';
+  }
+  function showIdentity(next) {
+    identity = next;
+    didValue.textContent = next.did;
+    didValue.title = next.did;
+    seedEl.value = hexFromBytes(next.seed);
+    document.getElementById('copy-did').disabled = false;
+    document.getElementById('copy-seed').disabled = false;
+    document.getElementById('clear-key').disabled = false;
+    signedEl.disabled = false; signedEl.checked = true;
+    setIdentityState('Identity ready — seed is held in this tab only', false);
+    applySendMode();
+  }
+  async function restoreIdentity(seed) {
+    setIdentityState('Deriving public identity…', false);
+    try { showIdentity(await identityFromSeed(seed)); }
+    catch (e) { setIdentityState('error — ' + String(e.message || e), true); }
+  }
+  function forgetIdentity() {
+    if (identity) identity.seed.fill(0);
+    identity = null; lastNonce = 0; seedEl.value = '';
+    didValue.textContent = 'No identity loaded'; didValue.removeAttribute('title');
+    ['copy-did', 'copy-seed', 'clear-key'].forEach(function (id) {
+      document.getElementById(id).disabled = true;
+    });
+    signedEl.checked = false; signedEl.disabled = true;
+    setIdentityState('Not signed in', false); applySendMode();
+  }
+  async function copyIdentityValue(button, value, label) {
+    var original = button.textContent;
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(value);
+      button.textContent = 'Copied';
+    } catch (_e) { button.textContent = 'Copy failed'; }
+    setTimeout(function () { button.textContent = original || label; }, 1200);
+  }
+  document.getElementById('generate-key').addEventListener('click', function () {
+    var seed = new Uint8Array(32); crypto.getRandomValues(seed); restoreIdentity(seed);
+  });
+  document.getElementById('restore-key').addEventListener('click', function () {
+    try { restoreIdentity(bytesFromHex(seedEl.value.trim())); }
+    catch (e) { setIdentityState('error — ' + String(e.message || e), true); }
+  });
+  document.getElementById('toggle-seed').addEventListener('click', function () {
+    var showing = seedEl.type === 'text'; seedEl.type = showing ? 'password' : 'text';
+    this.textContent = showing ? 'Show seed' : 'Hide seed'; this.setAttribute('aria-pressed', String(!showing));
+  });
+  document.getElementById('copy-did').addEventListener('click', function () {
+    if (identity) copyIdentityValue(this, identity.did, 'Copy DID');
+  });
+  document.getElementById('copy-seed').addEventListener('click', function () {
+    if (identity) copyIdentityValue(this, hexFromBytes(identity.seed), 'Copy seed');
+  });
+  document.getElementById('clear-key').addEventListener('click', forgetIdentity);
+  signedEl.addEventListener('change', applySendMode);
 
   // Opening a room from the list has to actually take you there. The list is a screenful on
   // its own — more so on a phone, and it holds up to 200 rows — so filling a log several
@@ -828,18 +1083,33 @@ GET /kv/topic/&lt;room&gt;/set/&lt;text&gt;    what a room is for — shown abov
     timer = setInterval(function () { poll(); loadRooms(); }, 5000);
   }
 
-  function send() {
+  async function send() {
     var text = textEl.value.trim();
-    if (!text) return;
-    fetch('/r/' + encodeURIComponent(room), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: nickEl.value.trim() || 'human', text: text })
-    }).then(function (r) {
-      if (!r.ok) return r.text().then(function (t) { throw new Error(t.split('\n')[0]); });
+    if (!text || sending) return;
+    sending = true; document.getElementById('send').disabled = true;
+    var payload = { from: nickEl.value.trim() || 'human', text: text };
+    try {
+      if (signedEl.checked) {
+        if (!identity) throw new Error('generate or restore an identity first');
+        var swept = text.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, ' ').trim();
+        if (!swept) throw new Error('nothing visible remains after the single-line sweep');
+        var nonce = String(Math.max(Date.now(), lastNonce + 1)); lastNonce = Number(nonce);
+        var canonical = room + '|' + nonce + '|' + swept;
+        var signature = new Uint8Array(await crypto.subtle.sign(
+          { name: 'Ed25519' }, identity.privateKey, new TextEncoder().encode(canonical)));
+        payload = { did: identity.did, sig: base64url(signature), nonce: nonce, text: swept };
+      }
+      var r = await fetch('/r/' + encodeURIComponent(room), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      if (!r.ok) {
+        var errorText = await r.text();
+        throw new Error(errorText.split('\n')[0]);
+      }
       textEl.value = '';
       poll();
-    }).catch(function (e) { fail(String(e.message || e)); });
+    } catch (e) { fail(String(e.message || e)); }
+    finally { sending = false; document.getElementById('send').disabled = false; }
   }
 
   // Re-render on every keystroke: filtering is a client-side pass over at most 200 rows the
