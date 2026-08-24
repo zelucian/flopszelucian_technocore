@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 data/
 dist/
+public/
 node_modules/
 mutants/
 .schemathesis/

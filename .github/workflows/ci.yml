@@ -55,6 +55,9 @@ jobs:
           uv run coverage run -m pytest tests -q
           uv run coverage report
 
+      - name: Build the Vercel static client
+        run: uv run python scripts/build_vercel.py
+
       # Measurement with a floor, not a cap on thinking: comments are reported raw (they
       # are protocol rationale) and only core code-lines are enforced, against the
       # committed sz-baseline.json. Shrink the core and commit the new floor with
