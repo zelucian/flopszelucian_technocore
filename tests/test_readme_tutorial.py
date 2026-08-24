@@ -3,13 +3,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_readme_is_an_indonesian_identity_and_signed_chat_tutorial():
+def test_readme_is_an_english_identity_and_signed_chat_tutorial():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for marker in (
         "docs/assets/technocore-key.gif",
-        "## Tutorial: generate seed dan DID key",
-        "## Tutorial: kirim signed chat ke Technocore",
-        "## Pulihkan DID dari seed",
+        "## Guided tutorial",
+        "docs/screenshots/01-generate-identity.jpg",
+        "docs/screenshots/02-rooms-and-chat.jpg",
+        "docs/screenshots/03-signed-chat.jpg",
+        "<details open>",
+        "Generate a seed and DID key",
+        "Send a signed message",
         "Generate identity",
         "Sign with active DID",
         "Forget from tab",
@@ -17,6 +21,18 @@ def test_readme_is_an_indonesian_identity_and_signed_chat_tutorial():
     ):
         assert marker in readme
     assert "## Deploy ke Vercel" not in readme
+
+
+def test_readme_screenshots_are_real_jpeg_images():
+    for name in (
+        "01-generate-identity.jpg",
+        "02-rooms-and-chat.jpg",
+        "03-signed-chat.jpg",
+    ):
+        screenshot = (ROOT / "docs" / "screenshots" / name).read_bytes()
+        assert screenshot.startswith(b"\xff\xd8\xff")
+        assert screenshot.endswith(b"\xff\xd9")
+        assert len(screenshot) >= 40_000
 
 
 def test_readme_banner_is_a_real_looping_gif():
